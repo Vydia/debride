@@ -336,6 +336,19 @@ class Debride < MethodBasedSexpProcessor
       end
     when *GRAPHQL_OBJECT_METHODS then
       if option[:graphql]
+
+        # s(:call, nil, :field, s(:lit, :field_name), s(:hash, ...))
+        possible_hash = sexp.last
+        if Sexp === possible_hash && possible_hash.sexp_type == :hash
+          possible_hash.sexp_body.each_slice(2) do |key, val|
+            next unless key == s(:lit, :method)
+            next unless Sexp === val
+
+            called << val.last        if val.sexp_type == :lit
+            called << val.last.to_sym if val.sexp_type == :str
+          end
+        end
+
         # s(:call, nil, :field, s(:lit, :field_name), ...)
         _, _, _, (_, name), * = sexp
 

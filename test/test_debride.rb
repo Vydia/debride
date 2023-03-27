@@ -380,12 +380,14 @@ class TestDebride < Minitest::Test
       class Thing
         def id = 1
         def name = 1
+        def meth = 1
       end
 
       module GraphQL
         class ThingObject < GraphQL::Schema::Object
           field :id, ID, null: false
           field :name, String, null: true
+          field :other_name, String, null: true, method: :meth
         end
       end
     RUBY
