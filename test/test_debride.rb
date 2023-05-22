@@ -535,8 +535,8 @@ class TestDebride < Minitest::Test
            "AttributeAccessor#w4="        => "(io):3",
            "AttributeAccessor#r1"         => "(io):4",
            "AttributeAccessor#r2"         => "(io):4",
-           "AttributeAccessor#initialize" => "(io):5-10",
-           "AttributeAccessor::class_method" => "(io):12-14"
+           "AttributeAccessor#initialize" => "(io):5-9",
+           "AttributeAccessor::class_method" => "(io):12-13"
           }
 
     assert_equal exp, d.method_locations
