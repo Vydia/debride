@@ -7,6 +7,7 @@ Hoe::add_include_dirs("../../sexp_processor/dev/lib",
                       "../../ruby_parser/dev/lib",
                       "../../ruby2ruby/dev/lib",
                       "../../ZenTest/dev/lib",
+                      "../../debride-erb/dev/lib",
                       "../../path_expander/dev/lib",
                       "lib")
 
@@ -19,8 +20,8 @@ Hoe.spec "debride" do
   developer "Ryan Davis", "ryand-ruby@zenspider.com"
   license "MIT"
 
-  dependency "sexp_processor", "~> 4.5"
-  dependency "ruby_parser", "~> 3.6"
+  dependency "sexp_processor", "~> 4.17"
+  dependency "ruby_parser", "~> 3.20"
   dependency "path_expander",  "~> 1.0"
 end
 
@@ -28,7 +29,9 @@ def run dir, whitelist
   abort "Specify dir to scan with D=<path>" unless dir
 
   ENV["GEM_HOME"] = "tmp/isolate"
-  ENV["GEM_PATH"] = "../../debride-erb/dev/tmp/isolate"
+  ENV["GEM_PATH"] = "#{Gem.paths.path.join ":"}:../../debride-erb/dev/tmp/isolate"
+
+  Gem.paths = ENV
 
   whitelist = whitelist && ["--whitelist", whitelist]
   verbose   = ENV["V"]  && "-v"

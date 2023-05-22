@@ -12,7 +12,7 @@ require "path_expander"
 # A static code analyzer that points out possible dead methods.
 
 class Debride < MethodBasedSexpProcessor
-  VERSION = "1.10.1" # :nodoc:
+  VERSION = "1.12.0" # :nodoc:
   PROJECT = "debride"
 
   def self.load_plugins proj = PROJECT
@@ -56,7 +56,7 @@ class Debride < MethodBasedSexpProcessor
     expander = PathExpander.new(args, glob)
     files = expander.process
     excl  = debride.option[:exclude]
-    excl.map! { |fd| File.directory?(fd) ? "#{fd}/" : fd } if excl
+    excl.map! { |fd| File.directory?(fd) ? "#{fd}/**/*" : fd } if excl
 
     files = expander.filter_files files, StringIO.new(excl.join "\n") if excl
 
@@ -97,8 +97,7 @@ class Debride < MethodBasedSexpProcessor
       raise "Unhandled type: #{path_or_io.class}:#{path_or_io.inspect}"
     end
 
-    rp = RubyParser.for_current_ruby rescue RubyParser.new
-    rp.process(file, path, option[:timeout])
+    RubyParser.new.process(file, path, option[:timeout])
   rescue Racc::ParseError, RegexpError => e
     warn "Parse Error parsing #{path}. Skipping."
     warn "  #{e.message}"
@@ -111,7 +110,15 @@ class Debride < MethodBasedSexpProcessor
 
   def self.parse_options args
     options = {
-      :whitelist => [],
+      :whitelist => %i[
+                       extended
+                       included
+                       inherited
+                       method_added
+                       method_missing
+                       prepended
+                      ],
+      :exclude => [],
       :format => :text,
     }
 
@@ -129,7 +136,7 @@ class Debride < MethodBasedSexpProcessor
       end
 
       opts.on("-e", "--exclude FILE1,FILE2,ETC", Array, "Exclude files or directories in comma-separated list.") do |list|
-        options[:exclude] = list
+        options[:exclude].concat list
       end
 
       opts.on("-w", "--whitelist FILE", String, "Whitelist these messages.") do |s|
@@ -360,6 +367,17 @@ class Debride < MethodBasedSexpProcessor
       method_name = method_name.to_s.delete_suffix("_path").to_sym if option[:rails]
     when /^deliver_/ then
       method_name = method_name.to_s.delete_prefix("deliver_").to_sym if option[:rails]
+    when :alias_method then
+      _, _, _, lhs, rhs = sexp
+
+      if Sexp === lhs and Sexp === rhs then
+        lhs = lhs.last
+        rhs = rhs.last
+
+        record_method lhs, sexp.file, sexp.line
+
+        called << rhs
+      end
     end
 
     # check if the call has a block shorthand argument, etc. E.g. for `.each(&:empty?)`, `empty?` is called
@@ -377,6 +395,33 @@ class Debride < MethodBasedSexpProcessor
     process_until_empty sexp
 
     sexp
+  end
+
+  def process_alias exp
+    _, (_, lhs), (_, rhs) = exp
+
+    record_method lhs, exp.file, exp.line
+
+    called << rhs
+
+    exp
+  end
+
+  def process_block_pass exp # :nodoc:
+    _, name = exp
+
+    return exp unless name
+
+    case name.sexp_type
+    when :lit then              # eg &:to_sym
+      called << name.last
+    else                        # eg &lvar or &method(:x)
+      # do nothing, body will get processed below
+    end
+
+    process_until_empty exp
+
+    exp
   end
 
   def process_cdecl exp # :nodoc:
@@ -398,7 +443,7 @@ class Debride < MethodBasedSexpProcessor
 
   def name_to_string exp
     case exp.sexp_type
-    when :const then
+    when :const, :lit, :str then
       exp.last.to_s
     when :colon2 then
       _, lhs, rhs = exp
@@ -584,6 +629,10 @@ class Debride < MethodBasedSexpProcessor
     YAML.dump data, io
   end
 
+  def inspect
+    "Debride[current=%s]" % [signature]
+  end
+
   ##
   # Rails' macro-style methods that setup method calls to happen during a rails
   # app's execution.
@@ -593,7 +642,7 @@ class Debride < MethodBasedSexpProcessor
     :around_action,
     :before_action,
 
-    # http://api.rubyonrails.org/classes/ActiveRecord/Callbacks.html
+    # https://api.rubyonrails.org/classes/ActiveRecord/Callbacks.html (at bottom)
     :after_commit,
     :after_create,
     :after_destroy,
@@ -614,7 +663,7 @@ class Debride < MethodBasedSexpProcessor
     :before_update,
     :before_validation,
 
-    # http://api.rubyonrails.org/classes/ActiveModel/Validations/ClassMethods.html#method-i-validate
+    # https://api.rubyonrails.org/classes/ActiveModel/Validations/ClassMethods.html#method-i-validate
     :validate,
   ]
 
@@ -627,6 +676,7 @@ class Debride < MethodBasedSexpProcessor
     :validates,
     :validates_absence_of,
     :validates_acceptance_of,
+    :validates_comparison_of,
     :validates_confirmation_of,
     :validates_exclusion_of,
     :validates_format_of,

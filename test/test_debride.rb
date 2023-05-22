@@ -1,6 +1,8 @@
 require "minitest/autorun"
 require "debride"
 
+$: << "../../debride-erb/dev/tmp/isolate"
+
 class SafeDebride < Debride
   def self.abort s
     raise s
@@ -9,8 +11,9 @@ end
 
 class TestDebride < Minitest::Test
   EXP_LIST = [["Debride",
-               [:process_attrasgn,
-                :process_call,
+               [:process_alias,
+                :process_attrasgn,
+                :process_block_pass,
                 :process_cdecl,
                 :process_colon2,
                 :process_colon3,
@@ -19,6 +22,7 @@ class TestDebride < Minitest::Test
                 :process_defs,
                 :process_op_asgn2,
                 :process_rb,
+                :process_safe_call,
                 :report,
                 :report_json,
                 :report_text,
@@ -30,10 +34,14 @@ class TestDebride < Minitest::Test
 
   EXP_FORMATTED = { :missing => formatted_vals }
 
+  make_my_diffs_pretty!
+
   def assert_option arg, exp_arg, exp_opt
     opt = SafeDebride.parse_options arg
 
-    exp_opt = {:whitelist => [], :format => :text}.merge exp_opt
+    wl = [:extended, :included, :inherited, :method_added, :method_missing, :prepended]
+
+    exp_opt = {:whitelist => wl, :exclude => [], :format => :text}.merge exp_opt
     assert_equal exp_opt, opt
     assert_equal exp_arg, arg
   end
@@ -142,7 +150,7 @@ class TestDebride < Minitest::Test
     debride.report(io)
 
     exp  = JSON.load JSON.dump EXP_FORMATTED # force stringify
-    data = JSON.load io.string.gsub(/\d+-\d+/, "###")
+    data = JSON.load io.string.gsub(/:\d+(-\d+)?/, ":###")
 
     assert_equal exp, data
   end
@@ -154,7 +162,7 @@ class TestDebride < Minitest::Test
     debride.report(io)
 
     exp  = EXP_FORMATTED
-    data = YAML.load io.string.gsub(/\d+-\d+/, "###")
+    data = YAML.load io.string.gsub(/:\d+(-\d+)?/, ":###")
 
     assert_equal exp, data
   end
@@ -302,7 +310,7 @@ class TestDebride < Minitest::Test
     assert_process [], ruby
   end
 
-  def test_method_block_shorthand
+  def test_block_pass
     ruby = <<-RUBY.strip
       class Seattle
         def self.raining?
@@ -311,6 +319,31 @@ class TestDebride < Minitest::Test
       end
 
       [Seattle].each(&:raining?)
+    RUBY
+
+    assert_process [], ruby
+  end
+
+  def test_block_pass_other
+    ruby = <<-RUBY.strip
+      class Seattle
+        def self.raining?
+          -> { called }
+        end
+
+        def self.uncalled; end
+        def self.called; end
+      end
+
+      f(&Seattle.raining?)
+    RUBY
+
+    assert_process [["Seattle", [:uncalled]]], ruby
+  end
+
+  def test_block_pass_empty
+    ruby = <<-RUBY.strip
+      f(&) # block forwarding
     RUBY
 
     assert_process [], ruby
@@ -330,7 +363,7 @@ class TestDebride < Minitest::Test
     assert_process [], ruby
   end
 
-  def test_method_with_symbol_to_proc
+  def test_call_method
     ruby = <<-RUBY.strip
       class Seattle
         def self.raining?
@@ -338,7 +371,7 @@ class TestDebride < Minitest::Test
         end
 
         def self.raining_still?
-          method(:raining?).to_proc.call
+          method(:raining?)
         end
       end
 
@@ -484,7 +517,10 @@ class TestDebride < Minitest::Test
       object.a3 = 'Baz'
     RUBY
 
-    d = assert_process [["AttributeAccessor", [:a1=, :a2, :a3, :class_method, :r2, :w2=]]], ruby
+    exp = [["AttributeAccessor",
+            [:a1=, :a2, :a3, :class_method, :r2, :w2=]]]
+
+    d = assert_process exp, ruby
 
     exp = {
            "AttributeAccessor#a1"         => "(io):2",
@@ -499,8 +535,8 @@ class TestDebride < Minitest::Test
            "AttributeAccessor#w4="        => "(io):3",
            "AttributeAccessor#r1"         => "(io):4",
            "AttributeAccessor#r2"         => "(io):4",
-           "AttributeAccessor#initialize" => "(io):5-9",
-           "AttributeAccessor::class_method" => "(io):12-13"
+           "AttributeAccessor#initialize" => "(io):5-10",
+           "AttributeAccessor::class_method" => "(io):12-14"
           }
 
     assert_equal exp, d.method_locations
